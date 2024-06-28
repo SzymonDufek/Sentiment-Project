@@ -18,15 +18,28 @@ ui <- fluidPage(
       hr(),
       uiOutput("colnamesUI"),
       actionButton("renameCols", "Zmień nazwy kolumn"),
+      hr(),
+      DTOutput("varTypeTable"),
+      selectInput("selectedVar", "Wybierz zmienną do zmiany typu", choices = NULL),
+      selectInput("newVarType", "Wybierz nowy typ", choices = c("numeric", "character", "factor")),
+      actionButton("changeVarType", "Zmień typ zmiennej"),
       actionButton("model", "Przetwarzanie przez model")
     ),
     
     mainPanel(
       tabsetPanel(
-        tabPanel("Ramka danych", 
+        tabPanel("Ramka danych", DTOutput("dataTable")),
+        tabPanel("Statystyki",
                  fluidRow(
-                   column(6, DTOutput("dataTable")),
-                   column(6, verbatimTextOutput("summary"))
+                   column(12, DTOutput("summ_table"))
+                 ),
+                 hr(),
+                 fluidRow(
+                   column(12, h4("Podsumowanie zmiennych numerycznych"), DTOutput("numSummaryTable"))
+                 ),
+                 hr(),
+                 fluidRow(
+                   column(12, h4("Podsumowanie zmiennych typu character"), DTOutput("charSummaryTable"))
                  )),
         tabPanel("Wykresy", plotOutput("plot"))
       )
@@ -37,10 +50,15 @@ ui <- fluidPage(
 # Definiowanie serwera
 server <- function(input, output, session) {
   data <- reactiveVal(NULL)
+  modifiedData <- reactiveValues(df = NULL)
   
   observeEvent(input$file, {
     df <- read.csv(input$file$datapath, header = TRUE, sep = ",")
     data(df)
+    modifiedData$df <- df
+    
+    # Aktualizacja listy zmiennych do wyboru
+    updateSelectInput(session, "selectedVar", choices = colnames(df))
   })
   
   output$colnamesUI <- renderUI({
@@ -60,6 +78,7 @@ server <- function(input, output, session) {
     df <- data()
     colnames(df) <- new_colnames
     data(df)  # Aktualizacja reactiveVal po zmianie nazw kolumn
+    modifiedData$df <- df
   })
   
   output$dataTable <- renderDT({
@@ -67,27 +86,109 @@ server <- function(input, output, session) {
     datatable(data(), options = list(pageLength = 10, autoWidth = TRUE, responsive = TRUE))
   })
   
-  output$summary <- renderPrint({
-    req(data())
-    df <- data()
+  output$varTypeTable <- renderDT({
+    req(modifiedData$df)
+    df <- modifiedData$df
+    var_types <- sapply(df, class)
     
-    # Liczenie braków danych dla każdej kolumny
-    na_count <- sapply(df, function(col) sum(is.na(col)))
-    na_summary <- data.frame(Kolumna = names(na_count), Braki = na_count)
+    var_type_df <- data.frame(
+      Zmienna = names(var_types),
+      Typ = unname(var_types),
+      stringsAsFactors = FALSE
+    )
     
-    # Tworzenie listy podsumowań dla każdej kolumny
-    summaries <- lapply(seq_along(df), function(i) {
-      col <- df[[i]]
-      type <- if (is.numeric(col)) "Numeryczny" else if (is.character(col)) "Tekstowy" else "Inny"
-      list(
-        Nazwa = names(df)[i],
-        Typ = type,
-        Podsumowanie = summary(col),
-        Braki = na_count[i]
+    datatable(var_type_df, options = list(dom = 't', autoWidth = TRUE))
+  })
+  
+  observeEvent(input$changeVarType, {
+    req(modifiedData$df, input$selectedVar, input$newVarType)
+    
+    var_name <- input$selectedVar
+    new_type <- input$newVarType
+    
+    df <- modifiedData$df
+    
+    # Konwersja zmiennej na wybrany typ
+    if (new_type == "numeric") {
+      df[[var_name]] <- as.numeric(df[[var_name]])
+    } else if (new_type == "character") {
+      df[[var_name]] <- as.character(df[[var_name]])
+    } else if (new_type == "factor") {
+      df[[var_name]] <- as.factor(df[[var_name]])
+    }
+    
+    modifiedData$df <- df
+    data(df)  # Aktualizacja reactiveVal po zmianie typu zmiennej
+    
+    # Aktualizacja tabeli typów zmiennych
+    output$varTypeTable <- renderDT({
+      var_types <- sapply(df, class)
+      
+      var_type_df <- data.frame(
+        Zmienna = names(var_types),
+        Typ = unname(var_types),
+        stringsAsFactors = FALSE
+      )
+      
+      datatable(var_type_df, options = list(dom = 't', autoWidth = TRUE))
+    })
+  })
+  
+  output$summ_table <- renderDT({
+    req(modifiedData$df)
+    
+    summary_df <- data.frame(
+      Wartość = c(ncol(modifiedData$df), nrow(modifiedData$df), sum(is.na(modifiedData$df))),
+      row.names = c('Liczba zmiennych', 'Liczba obserwacji', 'Liczba braków danych')
+    )
+    
+    datatable(summary_df, options = list(dom = 't', autoWidth = TRUE))
+  })
+  
+  output$numSummaryTable <- renderDT({
+    req(modifiedData$df)
+    df <- modifiedData$df
+    
+    # Filtracja zmiennych numerycznych
+    num_cols <- sapply(df, is.numeric)
+    num_summary <- df[, num_cols, drop = FALSE]
+    
+    # Tworzenie tabeli podsumowań dla zmiennych numerycznych
+    summaries <- lapply(seq_along(num_summary), function(i) {
+      col <- num_summary[[i]]
+      data.frame(
+        Nazwa = names(num_summary)[i],
+        Min = min(col, na.rm = TRUE),
+        Max = max(col, na.rm = TRUE),
+        Mean = mean(col, na.rm = TRUE),
+        Median = median(col, na.rm = TRUE),
+        SD = sd(col, na.rm = TRUE)
       )
     })
     
-    list(Braki = na_summary, Podsumowanie = summaries)
+    datatable(do.call(rbind, summaries), options = list(dom = 't', autoWidth = TRUE))
+  })
+  
+  output$charSummaryTable <- renderDT({
+    req(modifiedData$df)
+    df <- modifiedData$df
+    
+    # Filtracja zmiennych typu character
+    char_cols <- sapply(df, is.character)
+    char_summary <- df[, char_cols, drop = FALSE]
+    
+    # Tworzenie tabeli podsumowań dla zmiennych typu character
+    summaries <- lapply(seq_along(char_summary), function(i) {
+      col <- char_summary[[i]]
+      data.frame(
+        Nazwa = names(char_summary)[i],
+        Unique = length(unique(col)),
+        Mode = names(sort(table(col), decreasing = TRUE))[1],
+        NAs = sum(is.na(col))
+      )
+    })
+    
+    datatable(do.call(rbind, summaries), options = list(dom = 't', autoWidth = TRUE))
   })
   
   output$plot <- renderPlot({
