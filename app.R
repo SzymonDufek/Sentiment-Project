@@ -1,17 +1,23 @@
+options(shiny.maxRequestSize = 30*1024^2)
+
 library(shiny)
 library(DT)
 library(tm)  # Pakiet do pracy z tekstem, w tym stopwords
 library(shinyjs)  # Do dynamicznego panelu
 library(shinyBS)  # Do wysuwającego się panelu
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(stringr)
 
 # Definiowanie UI
 ui <- fluidPage(
-  useShinyjs(),  # Aktywacja shinyjs
+  useShinyjs(),
   titlePanel("Prototyp aplikacji Shiny"),
   
   sidebarLayout(
     sidebarPanel(
-      style = "overflow-y: auto; max-height: 90vh; position:relative;",  # Umożliwia przewijanie zawartości panelu bocznego
+      style = "overflow-y: auto; max-height: 90vh; position:relative;",
       fileInput("file", "Wybierz plik CSV", accept = ".csv"),
       hr(),
       actionButton("explore", "Eksploracja danych"),
@@ -28,13 +34,13 @@ ui <- fluidPage(
       selectInput("sentimentVar", "Wybierz zmienną sentymentu", choices = NULL),
       uiOutput("sentimentValuesUI"),
       actionButton("analyzeWords", "Analizuj słowa"),
+      DTOutput("wordFreqTable"),
       hr(),
       selectInput("cleanTextVar", "Wybierz zmienną tekstową do wyczyszczenia", choices = NULL),
       actionButton("cleanText", "Wyczyść tekst"),
       hr(),
       selectInput("missingDataAction", "Wybierz akcję dla braków danych", choices = c("Usuń rekordy", "Testowa akcja")),
       actionButton("handleMissingData", "Zastosuj akcję"),
-      DTOutput("wordFreqTable"),
       actionButton("model", "Przetwarzanie przez model")
     ),
     
@@ -45,30 +51,11 @@ ui <- fluidPage(
         tabPanel("Statystyki",
                  actionButton("refreshStats", "Odśwież"),
                  hr(),
-                 bsCollapse(id = "collapseExample", open = "stat_summary", 
-                            bsCollapsePanel("Podsumowanie statystyk",
-                                            fluidRow(
-                                                     fluidRow(
-                                                       column(12, DTOutput("summ_table"))
-                                                     ),
-                                                     hr(),
-                                                     fluidRow(
-                                                       column(12, h4("Podsumowanie zmiennych numerycznych"), DTOutput("numSummaryTable"))
-                                                     ),
-                                                     hr(),
-                                                     fluidRow(
-                                                       column(12, h4("Podsumowanie zmiennych typu character"), DTOutput("charSummaryTable"))
-                                                     ))
-                                                                                )
-                                                                ),
-                            bsCollapsePanel("Analiza danych", id = "data_analysis",
-                                            fluidRow(
-                                              column(4, actionButton("testButton1_data", "Testowy przycisk 1")),
-                                              column(4, actionButton("testButton2_data", "Testowy przycisk 2")),
-                                              column(4, actionButton("testButton3_data", "Testowy przycisk 3"))
-                                            )
-                            )
-                 ),
+                 uiOutput("variableCheckboxes"),
+                 actionButton("generateStats", "Generuj statystyki"),
+                 hr(),
+                 DTOutput("statsTable")
+        ),
         tabPanel("Wykresy", plotOutput("plot"))
       )
     )
@@ -124,6 +111,12 @@ server <- function(input, output, session) {
     updateSelectInput(session, "wordFreqVar", choices = colnames(df))
     updateSelectInput(session, "sentimentVar", choices = colnames(df))
     updateSelectInput(session, "cleanTextVar", choices = colnames(df))
+    updateSelectInput(session, 'dataTable', choices = colnames(df))
+    
+    output$dataTable <- renderDT({
+      datatable(df, options = list(pageLength = 10, autoWidth = TRUE, responsive = TRUE))
+    })
+    updateSummaries(df)
   })
   
   output$dataTable <- renderDT({
@@ -233,42 +226,54 @@ server <- function(input, output, session) {
     updateSummaries(df)  # Aktualizacja podsumowań i tabel
   })
   
+  observeEvent(input$sentimentVar, {
+    req(modifiedData$df)
+    df <- modifiedData$df
+    sentiment_var <- input$sentimentVar
+    
+    sentiment_values <- unique(df[[sentiment_var]])
+    output$sentimentValuesUI <- renderUI({
+      selectInput("selectedSentimentValue", "Wybierz wartość sentymentu", choices = sentiment_values)
+    })
+  })
   
   observeEvent(input$analyzeWords, {
-    req(modifiedData$df, input$wordFreqVar)
-    df <- modifiedData$df
-    text_var <- input$wordFreqVar
+    req(modifiedData$df, input$wordFreqVar, input$sentimentVar, input$selectedSentimentValue)
     
-    # Sprawdzenie, czy wybrana zmienna jest typu character
-    if (!is.character(df[[text_var]])) {
+    df <- modifiedData$df
+    word_var <- input$wordFreqVar
+    sentiment_var <- input$sentimentVar
+    selected_sentiment <- input$selectedSentimentValue
+    
+    # Sprawdzenie czy wybrana zmienna jest typu character
+    if (!is.character(df[[word_var]])) {
       showModal(modalDialog(
         title = "Błąd",
-        "Wybrana zmienna do analizy częstości słów musi być typu character.",
+        "Wybrana zmienna do analizy słów musi być typu character.",
         easyClose = TRUE,
         footer = NULL
       ))
       return()
     }
     
-    # Analiza częstości słów
-    corpus <- Corpus(VectorSource(df[[text_var]]))
-    corpus <- tm_map(corpus, content_transformer(tolower))
-    corpus <- tm_map(corpus, removePunctuation)
-    corpus <- tm_map(corpus, removeNumbers)
-    corpus <- tm_map(corpus, removeWords, stopwords("en"))
-    corpus <- tm_map(corpus, stripWhitespace)
+    # Filtrowanie danych według wybranej wartości sentymentu
+    filtered_df <- df[df[[sentiment_var]] == selected_sentiment, ]
     
-    dtm <- DocumentTermMatrix(corpus)
-    freq <- colSums(as.matrix(dtm))
-    word_freq <- data.frame(
-      Word = names(freq),
-      Frequency = freq,
-      row.names = NULL
-    )
-    word_freq <- word_freq[order(-word_freq$Frequency), ]
+    # Tworzenie wektora słów z tekstu
+    words <- unlist(strsplit(filtered_df[[word_var]], "\\W"))
+    words <- tolower(words)
+    words <- words[words != ""]
+    
+    # Usuwanie stopwords
+    words <- words[!words %in% stopwords("en")]
+    
+    # Tworzenie tabeli częstości słów
+    word_freq_df <- data.frame(table(words))
+    colnames(word_freq_df) <- c("Word", "Frequency")
+    word_freq_df <- word_freq_df[order(-word_freq_df$Frequency), ]
     
     output$wordFreqTable <- renderDT({
-      datatable(word_freq, options = list(pageLength = 10, autoWidth = TRUE, responsive = TRUE))
+      datatable(word_freq_df, options = list(pageLength = 10, autoWidth = TRUE))
     })
   })
   
@@ -372,7 +377,49 @@ server <- function(input, output, session) {
       footer = NULL
     ))
   })
+  
+  
+  output$variableCheckboxes <- renderUI({
+    req(data())
+    df <- data()
+    checkboxGroupInput("variableSelection", "Wybierz zmienne do generowania statystyk:",
+                       choices = names(df), selected = NULL)
+  })
+  
+  observeEvent(input$generateStats, {
+    req(data(), input$variableSelection)
+    df <- data()
+    selected_vars <- input$variableSelection
+    
+    stats_list <- lapply(selected_vars, function(var) {
+      if (is.numeric(df[[var]])) {
+        stats <- c(mean = mean(df[[var]], na.rm = TRUE),
+                   median = median(df[[var]], na.rm = TRUE),
+                   variance = var(df[[var]], na.rm = TRUE),
+                   sd = sd(df[[var]], na.rm = TRUE))
+      } else if (is.character(df[[var]])) {
+        stats <- c(liczba_rekordow = length(df[[var]]),
+                   liczba_unikalnych = length(unique(df[[var]])),
+                   )
+      } else {
+        stats <- NULL
+      }
+      return(stats)
+    })
+    
+    # Prepare data frame for rendering
+    stats_df <- data.frame(Zmienna = selected_vars,
+                           Statystyka = unlist(stats_list),
+                           stringsAsFactors = FALSE)
+    
+    output$statsTable <- renderDT({
+      datatable(stats_df, options = list(pageLength = 10, autoWidth = TRUE))
+    })
+  })
 }
+  
+  
+
 
 # Uruchomienie aplikacji
 shinyApp(ui, server)
