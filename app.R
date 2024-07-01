@@ -1,5 +1,6 @@
 options(shiny.maxRequestSize = 30*1024^2)
 
+
 library(shiny)
 library(DT)
 library(tm)  # Pakiet do pracy z tekstem, w tym stopwords
@@ -9,6 +10,8 @@ library(ggplot2)
 library(dplyr)
 library(tidyr)
 library(stringr)
+library(text2vec)
+
 
 # Definiowanie UI
 ui <- fluidPage(
@@ -20,8 +23,6 @@ ui <- fluidPage(
       style = "overflow-y: auto; max-height: 90vh; position:relative;",
       fileInput("file", "Wybierz plik CSV", accept = ".csv"),
       hr(),
-      actionButton("explore", "Eksploracja danych"),
-      hr(),
       uiOutput("colnamesUI"),
       actionButton("renameCols", "Zmień nazwy kolumn"),
       hr(),
@@ -30,18 +31,11 @@ ui <- fluidPage(
       selectInput("newVarType", "Wybierz nowy typ", choices = c("numeric", "character", "factor")),
       actionButton("changeVarType", "Zmień typ zmiennej"),
       hr(),
-      selectInput("wordFreqVar", "Wybierz zmienną tekstową do analizy częstości słów", choices = NULL),
-      selectInput("sentimentVar", "Wybierz zmienną sentymentu", choices = NULL),
-      uiOutput("sentimentValuesUI"),
-      actionButton("analyzeWords", "Analizuj słowa"),
-      DTOutput("wordFreqTable"),
-      hr(),
       selectInput("cleanTextVar", "Wybierz zmienną tekstową do wyczyszczenia", choices = NULL),
       actionButton("cleanText", "Wyczyść tekst"),
       hr(),
       selectInput("missingDataAction", "Wybierz akcję dla braków danych", choices = c("Usuń rekordy", "Testowa akcja")),
-      actionButton("handleMissingData", "Zastosuj akcję"),
-      actionButton("model", "Przetwarzanie przez model")
+      actionButton("handleMissingData", "Zastosuj akcję")
     ),
     
     mainPanel(
@@ -54,14 +48,42 @@ ui <- fluidPage(
                  uiOutput("variableCheckboxes"),
                  actionButton("generateStats", "Generuj statystyki"),
                  hr(),
-                 DTOutput("statsTable")
+                 DTOutput("statsTable"),
+                 hr(),
+                 
+                 uiOutput("ngramAnalysisUI"),
+                 DTOutput("ngramTable"),
+                 hr(),
+                 
+                 
+                 selectInput("wordFreqVar", "Wybierz zmienną tekstową do analizy częstości słów", choices = NULL),
+                 selectInput("sentimentVar", "Wybierz zmienną sentymentu", choices = NULL),
+                 uiOutput("sentimentValuesUI"),
+                 actionButton("analyzeWords", "Analizuj słowa"),
+                 DTOutput("wordFreqTable"),
+                 hr()
         ),
-        tabPanel("Wykresy", plotOutput("plot"))
+        tabPanel("Wykresy", pageWithSidebar(
+          headerPanel('Wybierz wykres do narysowania'),
+          sidebarPanel(
+            selectInput('plotType', 'Typ wykresu', choices = c("Histogram", "Testowa akcja")),
+            conditionalPanel(
+              condition = "input.plotType == 'Histogram'",
+              selectInput('x', 'Wybierz zmienną na osi X (dla histogramu)', choices = NULL),
+              selectInput('group', 'Wybierz zmienną grupującą (dla histogramu)', choices = c("None")),
+              uiOutput("valueSelectUI")
+            ),
+            actionButton("drawPlot", "Narysuj wykres")
+          ),
+          mainPanel(
+            plotOutput('plot')
+          )
+        ))
+        
       )
     )
   )
 )
-
 # Definiowanie serwera
 server <- function(input, output, session) {
   data <- reactiveVal(NULL)
@@ -112,6 +134,9 @@ server <- function(input, output, session) {
     updateSelectInput(session, "sentimentVar", choices = colnames(df))
     updateSelectInput(session, "cleanTextVar", choices = colnames(df))
     updateSelectInput(session, 'dataTable', choices = colnames(df))
+    updateSelectInput(session, 'x',choices = colnames(df))
+    updateSelectInput(session, 'group',choices = colnames(df))
+    
     
     output$dataTable <- renderDT({
       datatable(df, options = list(pageLength = 10, autoWidth = TRUE, responsive = TRUE))
@@ -173,6 +198,7 @@ server <- function(input, output, session) {
   })
   
   # Funkcja do aktualizacji podsumowań i tabel
+  # Funkcja do aktualizacji podsumowań i tabel
   updateSummaries <- function(df) {
     output$summ_table <- renderDT({
       summary_df <- data.frame(
@@ -219,6 +245,7 @@ server <- function(input, output, session) {
     })
   }
   
+  
   observeEvent(input$refreshStats, {
     req(modifiedData$df)
     df <- modifiedData$df
@@ -233,7 +260,7 @@ server <- function(input, output, session) {
     
     sentiment_values <- unique(df[[sentiment_var]])
     output$sentimentValuesUI <- renderUI({
-      selectInput("selectedSentimentValue", "Wybierz wartość sentymentu", choices = sentiment_values)
+      selectInput("selectedSentimentValue", "Wybierz wartość sentymentu", choices = c(sentiment_values))
     })
   })
   
@@ -349,8 +376,12 @@ server <- function(input, output, session) {
     df <- modifiedData$df
     
     if (input$missingDataAction == "Usuń rekordy") {
-      df <- df[complete.cases(df), ]
-    } else if (input$missingDataAction == "Testowa akcja") {
+      for(i in length(colnames(df))){
+        df <- replace_empty_text(df,colnames(df[i]))
+      }
+      df <- na.omit(df)
+      
+      } else if (input$missingDataAction == "Testowa akcja") {
       # Tylko komunikat, że testowa akcja została wywołana
       showModal(modalDialog(
         title = "Testowa akcja",
@@ -416,6 +447,119 @@ server <- function(input, output, session) {
       datatable(stats_df, options = list(pageLength = 10, autoWidth = TRUE))
     })
   })
+  
+  # N-GRAMS
+  
+  output$ngramAnalysisUI <- renderUI({
+    req(modifiedData$df)
+    
+    tagList(
+      selectInput("ngramVar", "Wybierz zmienną tekstową do analizy n-gramów:", choices = colnames(modifiedData$df)),
+      numericInput("ngramSize", "Wybierz rozmiar n-gramu:", value = 2, min = 2, max = 3),
+      actionButton("analyzeNgrams", "Analizuj n-gramy")
+    )
+  })
+  
+  observeEvent(input$analyzeNgrams, {
+    req(modifiedData$df, input$ngramVar, input$ngramSize)
+    
+    
+    df <- modifiedData$df
+    ngram_var <- input$ngramVar
+    ngram_size <- input$ngramSize
+    
+    # Sprawdzenie, czy wybrana zmienna jest typu character
+    if (!is.character(df[[ngram_var]])) {
+      showModal(modalDialog(
+        title = "Błąd",
+        "Wybrana zmienna do wyczyszczenia tekstu musi być typu character.",
+        easyClose = TRUE,
+        footer = NULL
+      ))
+      return()
+    }
+    
+    it <- itoken(df[[ngram_var]], tokenizer = word_tokenizer, progressbar = FALSE)
+    v <- create_vocabulary(it, ngram = c(ngram_size, ngram_size))
+    
+    ngram_freq_df <- data.frame(
+      Ngram = v$vocab$terms,
+      Frequency = v$vocab$terms_counts,
+      stringsAsFactors = FALSE
+    )
+    
+    
+    output$ngramTable <- renderDT({
+      datatable(ngram_freq_df, options = list(pageLength = 10, autoWidth = TRUE))
+    })
+    
+      showModal(modalDialog(
+      title = "Akcja zakończona",
+      "Znaleziono n-gramy.",
+      easyClose = TRUE,
+      footer = NULL
+    ))
+    
+  })
+  
+  
+  ######## WYKRESY #############
+  
+  observeEvent(input$file, {
+    df <- read.csv(input$file$datapath, header = TRUE, sep = ",")
+    data(df)
+    modifiedData$df <- df
+    colnamesInput(colnames(df))  # Zapisanie nazw kolumn do reactiveVal
+    updateSelectInput(session, "selectedVar", choices = colnames(df))
+    updateSelectInput(session, "wordFreqVar", choices = colnames(df))
+    updateSelectInput(session, "sentimentVar", choices = colnames(df))
+    updateSelectInput(session, "cleanTextVar", choices = colnames(df))
+    updateSelectInput(session, "x", choices = colnames(df))
+    updateSelectInput(session, "group", choices = c("None", colnames(df)))
+  })
+  
+  observeEvent(input$x, {
+    req(modifiedData$df)
+    df <- modifiedData$df
+    x_var <- input$x
+    unique_values <- unique(df[[x_var]])
+    output$valueSelectUI <- renderUI({
+      selectInput("xValue", "Wybierz wartość z wybranej zmiennej (opcjonalnie)", choices = c("None", unique_values))
+    })
+  })
+  
+  observeEvent(input$drawPlot, {
+    req(modifiedData$df, input$plotType)
+    df <- modifiedData$df
+    
+    output$plot <- renderPlot({
+      if (input$plotType == "Histogram") {
+        req(input$x)
+        
+        # Filtrowanie danych na podstawie wybranej wartości zmiennej x (jeśli wybrano)
+        if (!is.null(input$xValue) && input$xValue != "None") {
+          df <- df[df[[input$x]] == input$xValue, ]
+        }
+        
+        if (input$group == "None") {
+          ggplot(df, aes_string(x = input$x)) +
+            geom_histogram(binwidth = 1) +
+            labs(title = paste("Histogram zmiennej", input$x))
+        } else {
+          ggplot(df, aes_string(x = input$x, fill = input$group)) +
+            geom_bar() +
+            labs(title = paste("Histogram zmiennej", input$x, "z podziałem na", input$group))+
+            facet_wrap(facets = input$group)
+        }
+      } else if (input$plotType == "Testowa akcja") {
+        # Tutaj możesz dodać dowolną testową akcję
+        plot(1, 1, type = "n", xlim = c(0, 1), ylim = c(0, 1), xlab = "", ylab = "")
+      }
+    })
+  })
+  
+  
+  
 }
   
   
