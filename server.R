@@ -37,7 +37,7 @@ tidymodels_prefer()
 conflicted::conflicts_prefer(shiny::observe)
 # Define server logic required to draw a histogram
 function(input, output, session) {
-  
+
   colnamesInput <- reactiveVal(NULL)
   
   
@@ -158,7 +158,7 @@ function(input, output, session) {
   
   observeEvent(input$cleanText, {
     req(input$cleanTextVar)
-    
+    showPageSpinner()
     df <- modifiedData$df
     text_var <- input$cleanTextVar
     
@@ -172,7 +172,7 @@ function(input, output, session) {
       return()
     }
     
-    withProgress(message = 'Czyszczenie tekstu', value = 0, {
+    
       total_steps <- nrow(df)
       dots <- 0
       
@@ -191,17 +191,11 @@ function(input, output, session) {
         }
         
         df[[text_var]][i] <- text
-        incProgress(1 / total_steps)
-        if (i %% (total_steps / 10) == 0) {
-          dots <- (dots %% 3) + 1
-          message <- paste('Czyszczenie tekstu', strrep('.', dots))
-          setProgress(value = i / total_steps, message = message)
-          Sys.sleep(0.05)
-        }
       }
       df <- na.omit(df)
-      modifiedData$df <- df  # Update the reactive value with the cleaned data
-    })
+      modifiedData$df <- df  
+  
+    hidePageSpinner()
     
     output$dataTable <- renderDT({
       datatable(df, colnames = colnamesInput(), options = list(pageLength = 10, autoWidth = TRUE, responsive = TRUE))
@@ -275,7 +269,7 @@ function(input, output, session) {
     tagList(
       selectInput("ngramVar", "Wybierz zmienną tekstową do analizy n-gramów:", choices = colnames(modifiedData$df)),
       numericInput("ngramSize", "Wybierz rozmiar n-gramu:", value = 2, min = 2, max = 3),
-      actionButton("analyzeNgrams", "Analizuj n-gramy")
+      actionButton("analyzeNgrams", "Analizuj n-gramy",class = "btn-centered",width = '100%')
     )
   })
   
@@ -369,10 +363,24 @@ function(input, output, session) {
   })
   
   
+  
   observeEvent(input$SLPbutton,{
+    req(modifiedData$df, input$sentenceLengthVar)
+    
+    if (!is.character(modifiedData$df[[input$sentenceLengthVar]])) {
+      showModal(modalDialog(
+        title = "Błąd",
+        "Wybrana zmienna do analizy słów musi być typu character.",
+        easyClose = TRUE,
+        footer = NULL
+      ))
+      return()
+    }
+    
     
     output$sentenceLengthPlot <- renderPlot({
-      req(modifiedData$df, input$sentenceLengthVar)
+      
+      
       
       text_data <- modifiedData$df[[input$sentenceLengthVar]]
       
@@ -412,8 +420,8 @@ function(input, output, session) {
     output$plot <- renderPlot({
       req(modifiedData$df, input$variable)
       
-      text <- modifiedData$df[[!!sym(input$variable)]]
-      selected_var <- !!sym(input$variable)
+      text <- modifiedData$df[[input$variable]]
+      selected_var <- input$variable
       
       # Create a corpus and clean the text
       corpus <- Corpus(VectorSource(text))
@@ -429,7 +437,7 @@ function(input, output, session) {
       df_word_freqs <- data.frame(word = names(word_freqs), freq = word_freqs)
       
       # Check if a grouping variable is selected
-      if (!is.null(!!sym(input$groupingVariable)) && !!sym(input$groupingVariable) != "") {
+      if (!is.null(input$groupingVariable) && input$groupingVariable != "") {
         grouping_var <- modifiedData$df[[input$groupingVariable]]
         # Create a color vector based on the selected grouping variable
         group_factor <- as.factor(grouping_var)
@@ -443,7 +451,7 @@ function(input, output, session) {
       }
       
       # Generate the word cloud with optional grouping-based coloring
-      wordcloud(words = df_word_freqs$word, freq = df_word_freqs$freq, max.words = 100, random.order = FALSE, colors = word_colors)
+      try(wordcloud(words = df_word_freqs$word, freq = df_word_freqs$freq, max.words = 100, random.order = FALSE, colors = word_colors),silent = T)
     })
   })
   
@@ -465,7 +473,10 @@ function(input, output, session) {
   
   output$exclude_vars <- renderUI({
     req(modifiedData$df)
-    vars <- names(modifiedData$df) 
+    vars <- modifiedData$df %>% 
+      select(!c(input$target_var,input$text_var)) %>% 
+      names()
+    
     checkboxGroupInput("vars_to_exclude", "Wybierz zmienne do wykluczenia:", choices = vars)
   })
   
@@ -497,21 +508,12 @@ function(input, output, session) {
       step_normalize(all_predictors())
     
     # Model na podstawie wyboru użytkownika
-    if (input$model_type == "Klasyczne drzewo decyzyjne") {
-      model_spec <- decision_tree() %>%
-        set_mode("classification") %>%
-        set_engine("rpart")
-      
-    } else if (input$model_type == "Random Forest") {
+     if (input$model_type == "Random Forest") {
       model_spec <- rand_forest(trees = tune()) %>%
         set_mode("classification") %>%
         set_engine("ranger",importance = "impurity")
       
-    } else if (input$model_type == "XGBoost") {
-      model_spec <- boost_tree() %>%
-        set_mode("classification") %>%
-        set_engine("xgboost")
-    }
+    } 
     
     # Workflow
     wf <- workflow() %>%
@@ -543,8 +545,9 @@ function(input, output, session) {
     
     output$metricsDT <- renderDT(
       sentiment_final %>% 
-        collect_metrics() %>% 
-        #round(digits = 2) %>% 
+        collect_metrics() %>%
+        
+       # round(.estimate,digits = 2) %>% 
         datatable()
     )
 
@@ -553,16 +556,15 @@ function(input, output, session) {
         collect_predictions() %>%
         conf_mat(target, .pred_class)
       
-      autoplot(cm,type = 'heatmap',title = "Macierz błędów")
+      autoplot(cm,type = 'heatmap')
         
         })
     
-    utput$varImportance <- renderPlot({
+    output$varImportance <- renderPlot({
       final %>% 
         fit(train_data) %>%
         pull_workflow_fit() %>%
         vip::vi(lambda = best_auc$trees) %>%
-        group_by(input$target_var) %>%
         top_n(10, wt = abs(Importance)) %>%
         ungroup() %>%
         mutate(
@@ -572,8 +574,8 @@ function(input, output, session) {
         ) %>%
         ggplot(aes(x = Importance, y = Variable, fill = input$target_var)) +
         geom_col(show.legend = FALSE) +
-        facet_wrap(~input$target_var, scales = "free_y") +
-        labs(y = NULL)
+        labs(y = NULL, title = "Most important words")
+        
     })
       
     
@@ -587,12 +589,6 @@ function(input, output, session) {
     model()
   })
   
-  # Wizualizacja drzewa decyzyjnego (dla klasycznego drzewa decyzyjnego)
-  output$tree_plot <- renderPlot({
-    req(model())
-
-    
-  })
   
 }
 

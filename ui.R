@@ -2,7 +2,7 @@ library(shiny)
 library(bslib)
 library(DT)
 library(plotly)
-
+library(shinyWidgets)
 thematic::thematic_shiny()
 
 #===============================================================================
@@ -12,8 +12,18 @@ thematic::thematic_shiny()
 # Tab 1
 
 tab1 <- fillPage(
-  DTOutput('dataTable')  
   
+    tags$style(HTML("
+      # dataTable_div{
+      overflox-x: auto;
+      
+      }
+    ")),
+  
+  
+  # HTML5 Section with a DataTable output
+  
+    div(id = 'dataTable_div',DTOutput('dataTable'))
 )
 
 # Tab 2
@@ -21,23 +31,17 @@ tab1 <- fillPage(
 tab2 <- fillPage(
   layout_sidebar(
     sidebar = sidebar(
-      actionButton("refreshStats", "Odśwież"),
-      hr(),
-      uiOutput("variableCheckboxes"),
-      actionButton("generateStats", "Generuj statystyki"),
-      hr(),
-      DTOutput("statsTable"),
-      hr(),
+      open = 'open',
       uiOutput("ngramAnalysisUI"),
       hr(),
       selectInput("wordFreqVar", "Wybierz zmienną tekstową do analizy częstości słów", choices = NULL),
       selectInput("sentimentVar", "Wybierz zmienną sentymentu", choices = NULL),
       uiOutput("sentimentValuesUI"),
-      actionButton("analyzeWords", "Analizuj słowa"),
+      actionButton("analyzeWords", "Analizuj słowa",class = "btn-centered"),
       hr(),
       selectInput("sentenceLengthVar", "Select text variable for sentence length analysis", choices = NULL),
       checkboxInput("showDensity", "Show Density Plot", value = TRUE),
-      actionButton("SLPbutton",'Długość słów')
+      actionButton("SLPbutton",'Długość słów',class = "btn-centered")
       
         ),
     layout_columns(
@@ -63,25 +67,18 @@ tab2 <- fillPage(
 tab3 <- fillPage(
   layout_sidebar(
     sidebar = sidebar(
-      selectInput('plotType', 'Typ wykresu', choices = c("Histogram", "Wordcloud", "Macierz korelacji")),
-      conditionalPanel(
-        condition = "input.plotType == 'Histogram'",
-        selectInput('x', 'Wybierz zmienną na osi X (dla histogramu)', choices = NULL),
-        selectInput('group', 'Wybierz zmienną grupującą (dla histogramu)', choices = c("None")),
-        uiOutput("valueSelectUI"),
-        hr(),
-        actionButton("drawPlot", "Narysuj wykres")
-      ),
+      selectInput('plotType', 'Typ wykresu', choices = c("Wordcloud")),
       conditionalPanel(
         condition = "input.plotType == 'Wordcloud'",
         selectInput('variable', 'Wybierz zmienną (dla wordcloud)', choices = NULL),
         selectInput("groupingVariable", "Select grouping variable for word cloud coloring", choices = NULL, selected = NULL),
-        actionButton("drawWordcloud", "Narysuj wordcloud")
+        hr(),
+        actionButton("drawWordcloud", "Narysuj wordcloud",class = "btn-centered",width = '100%')
       ),
       
     ),
     layout_columns(
-      card(card_header(
+      card(card_body(
         plotOutput("plot")
           ),full_screen = TRUE)
     )
@@ -108,46 +105,18 @@ exploration <- page_fillable(
 
 
 tab_m1 <- fluidPage(
-  tags$style(HTML("
-    .container-fluid {
-      max-width: 100%;
-    #model_building_title {
-      margin-left: 20px;
-      margin-top: 10px;
-    }
-  ")),
-  layout_sidebar(
-    sidebar = sidebar(
-      titlePanel("Model target"),
-      uiOutput("target_var_ui"),
-      titlePanel("Model selection"),
-      selectInput("model_select","Model",
-                  choices = c("Decision Tree","XGBoost","Random Forest","SVM")),
-      titlePanel("Dataset split"),
-      sliderInput("split","Train size", min = 0.1, max = 0.95, step = 0.01, value = 0.8),
-    ),
-    div(id = "model_building_title", titlePanel(HTML("Model building summary"))),
-    uiOutput("v_box"),
-    uiOutput("model_select"),
-    uiOutput("train_size"),
-    uiOutput("type"),
-    uiOutput("pre_steps"),
-    actionButton("train_model", "Train Model"),
-    htmlOutput("build_result")
-  )
-)
-
-tab_m2 <- fluidPage(
   titlePanel("Modelowanie Sentymetu z Użyciem Drzewa Decyzyjnego"),
   
-  sidebarLayout(
-    sidebarPanel(
+  layout_sidebar(
+    sidebar = sidebar(
+      open = T,
+      width = 350,
       uiOutput("var_select"),
       uiOutput("exclude_vars"),
       sliderInput("split","", min = 0.1, max = 0.95, step = 0.01, value = 0.8),
       sliderInput("max_tokens","Maksymalna liczba tokenów", min = 100, max = 1000, step = 50, value = 600),
       selectInput("model_type", "Wybierz model:",
-                  choices = c("Klasyczne drzewo decyzyjne", "Random Forest", "XGBoost")),
+                  choices = c("Random Forest")),
       actionButton("train", "Trenuj Model")
     ),
     
@@ -165,10 +134,9 @@ page2 <- page_fillable(
   navset_card_underline(
     title = HTML("<span style='font-size:100%; font-weight:bold;'>Model Building</span>"),
     nav_panel("Building", tab_m1),
-    nav_panel("Results", tab_m2)
   ),
   theme = bs_theme(
-    preset = "pulse"
+    preset = "minty"
   )
 )
 
@@ -177,24 +145,64 @@ page2 <- page_fillable(
 #===============================================================================
 
 sidebar_main <- sidebar(
-  titlePanel(HTML("Upload file")),
-  fileInput("upload", "Wybierz plik CSV", accept = ".csv"),
-  #checkboxInput("header", "Header", TRUE),
-  selectInput("sep", "Choose the separator:",
-              choices = c("Comma" = ",", "Semicolon" = ";", "Tab" = "\t")),
-  checkboxInput("header", "Header", TRUE),
-  titlePanel((HTML("Summary"))),
-  hr(),
-  DTOutput("varTypeTable"),
-  selectInput("selectedVar", "Wybierz zmienną do zmiany typu", choices = NULL),
-  selectInput("newVarType", "Wybierz nowy typ", choices = c("numeric", "character", "factor")),
-  actionButton("changeVarType", "Zmień typ zmiennej"),
-  hr(),
-  selectInput("cleanTextVar", "Wybierz zmienną tekstową do wyczyszczenia", choices = NULL),
-  actionButton("cleanText", "Wyczyść tekst"),
-  hr(),
-  selectInput("missingDataAction", "Wybierz akcję dla braków danych", choices = c("Usuń rekordy", "Testowa akcja")),
-  actionButton("handleMissingData", "Zastosuj akcję")
+  width = 300,
+  # HTML5 Header
+  tags$header(
+    style = "display: flex; justify-content: center; align-items: center;",
+    titlePanel(HTML("Upload file"))
+  ),
+  
+  # HTML5 Section for file upload
+  tags$section(
+    fileInput("upload", "Wybierz plik CSV", accept = ".csv"),
+    selectInput("sep", "Choose the separator:",
+                choices = c("Comma" = ",", "Semicolon" = ";", "Tab" = "\t")),
+    checkboxInput("header", "Header", TRUE)
+  ),
+  
+  # HTML5 Section for summary and variable actions
+  tags$section(
+    style = "display: flex; justify-content: center; align-items: center;",
+    titlePanel(HTML("Summary")),
+  ),
+  tags$section(
+    hr(),
+    DTOutput("varTypeTable"),
+    selectInput("selectedVar", "Wybierz zmienną do zmiany typu", choices = NULL),
+    selectInput("newVarType", "Wybierz nowy typ", choices = c("numeric", "character", "factor")),
+    
+    # Centering button using a div and CSS flexbox
+    tags$div(
+      style = "display: flex; justify-content: center;",
+      actionButton("changeVarType", "Zmień typ zmiennej")
+    ),
+    
+    hr(),
+    selectInput("cleanTextVar", "Wybierz zmienną tekstową do wyczyszczenia", choices = NULL),
+    
+    # Centering button using a div and CSS flexbox
+    tags$div(
+      style = "display: flex; justify-content: center;",
+      actionButton("cleanText", "Wyczyść tekst")
+    )
+  ),
+  
+  # HTML5 Section for handling missing data
+  tags$section(
+    hr(),
+    selectInput("missingDataAction", "Wybierz akcję dla braków danych", choices = c("Usuń rekordy", "Testowa akcja")),
+    
+    # Centering button using a div and CSS flexbox
+    tags$div(
+      style = "display: flex; justify-content: center;",
+      actionButton("handleMissingData", "Zastosuj akcję")
+    )
+  ),
+  
+  # HTML5 Footer
+  tags$footer(
+    "Autor: Szymon Dufek"
+  )
 )
 
 #===============================================================================
@@ -204,7 +212,7 @@ sidebar_main <- sidebar(
 page_navbar(
   title = HTML("Sentiment Project"),
   theme = bs_theme(
-    preset = "pulse",
+    preset = "minty",
   ),
   underline = TRUE,
   sidebar = sidebar_main,
