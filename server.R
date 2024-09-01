@@ -39,8 +39,8 @@ conflicted::conflicts_prefer(shiny::observe)
 function(input, output, session) {
 
   colnamesInput <- reactiveVal(NULL)
-  
-  
+  model_trained <- reactiveVal(FALSE)
+
   data <- reactive({
     req(input$upload)
     
@@ -158,7 +158,7 @@ function(input, output, session) {
   
   observeEvent(input$cleanText, {
     req(input$cleanTextVar)
-    showPageSpinner()
+    showPageSpinner(caption = "Czyszczenie tekstu. Proszę czekać", color = '#f3969a')
     df <- modifiedData$df
     text_var <- input$cleanTextVar
     
@@ -267,7 +267,7 @@ function(input, output, session) {
     req(modifiedData$df)
     
     tagList(
-      selectInput("ngramVar", "Wybierz zmienną tekstową do analizy n-gramów:", choices = colnames(modifiedData$df)),
+      selectInput("ngramVar", tags$b("Wybierz zmienną tekstową do analizy n-gramów:"), choices = colnames(modifiedData$df)),
       numericInput("ngramSize", "Wybierz rozmiar n-gramu:", value = 2, min = 2, max = 3),
       actionButton("analyzeNgrams", "Analizuj n-gramy",class = "btn-centered",width = '100%')
     )
@@ -488,7 +488,7 @@ function(input, output, session) {
     text <- input$text_var
     
     
-    showPageSpinner(caption = 'Budowanie modelu. Proszę czekać.')
+    showPageSpinner(caption = 'Budowanie modelu. Proszę czekać.',color = "#f3969a")
     
     # Wybór zmiennych
     df <- modifiedData$df %>%
@@ -541,7 +541,8 @@ function(input, output, session) {
     
     
     hidePageSpinner()
-  
+    showPageSpinner(caption = "Tworzenie wyników. Proszę czekać.",color = "#f3969a")
+    
     
     output$metricsDT <- renderDT(
       sentiment_final %>% 
@@ -563,7 +564,7 @@ function(input, output, session) {
     output$varImportance <- renderPlot({
       final %>% 
         fit(train_data) %>%
-        pull_workflow_fit() %>%
+        extract_fit_parsnip() %>%
         vip::vi(lambda = best_auc$trees) %>%
         top_n(10, wt = abs(Importance)) %>%
         ungroup() %>%
@@ -574,10 +575,26 @@ function(input, output, session) {
         ) %>%
         ggplot(aes(x = Importance, y = Variable, fill = input$target_var)) +
         geom_col(show.legend = FALSE) +
-        labs(y = NULL, title = "Most important words")
+        labs(y = NULL)
         
     })
-      
+      hidePageSpinner()
+    model_trained(TRUE)
+    output$model_output_ui <- renderUI({
+      layout_columns(
+        card(card_header('Metryki'),
+             card_body(DTOutput('metricsDT'))
+             ),
+        card(card_header('Macierz trafności'),
+             card_body(plotOutput('confMatrix'))
+        ),
+        card(card_header('Ważność słów do predykcji sentymentu'),
+             card_body(plotOutput('varImportance'))
+        ),col_widths = c(12,6,6)
+          
+      )
+        
+      })
     
     
     
