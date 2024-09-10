@@ -41,17 +41,18 @@ tab2 <- fillPage(
       hr(),
       selectInput("sentenceLengthVar", tags$b("Rozkład długości słów"), choices = NULL),
       checkboxInput("showDensity", "Funkcja gęstości", value = TRUE),
-      actionButton("SLPbutton",'Długość słów',class = "btn-centered")
+      sliderInput("barsNum",label = "Liczba słupków:",value = 30,min = 10, max = 50,step = 5),
+      actionButton("SLPbutton",'Długość zdań',class = "btn-centered")
       
         ),
     layout_columns(
-      card(card_header('N-grams'),
+      card(card_header('N-gramy'),
            DTOutput("ngramsTable")
       ),
       card(card_header('Częstość słów'),
            DTOutput('wordFreqTable')
       ),
-      card(card_header('Length of sentences'),
+      card(card_header('Długość zdań'),
            plotOutput('sentenceLengthPlot')),
       col_widths =c(6,6,12) 
       
@@ -125,6 +126,7 @@ tab_m1 <- fillPage(
 
 page2 <- page_fillable(
   navset_card_underline(
+    title = HTML("<span style='font-size:100%; font-weight:bold;'>Model</span>"),
     nav_panel("Tworzenie", tab_m1),
   ),
   theme = bs_theme(

@@ -31,7 +31,7 @@ library(shinycssloaders)
 
 library(vip)
 
-
+options(shiny.maxRequestSize = 30 * 1024^2)
 
 tidymodels_prefer()
 conflicted::conflicts_prefer(shiny::observe)
@@ -67,7 +67,7 @@ function(input, output, session) {
         updateSelectInput(session, "sep", selected = possible_seps[[sep_name]])
         updateSelectInput(session, "sentenceLengthVar", choices = names(df))
         updateSelectInput(session, "sentimentVar", choices = names(df))
-        showNotification("Separator changed due to error with reading CSV file using the one selected.", type = "message")
+        showNotification("Separator zmieniony automatycznie ze względu na błąd odczytu danych.", type = "message")
         
         return(df)
       }, silent = TRUE)
@@ -394,7 +394,7 @@ function(input, output, session) {
       
       # Plot histogram and optionally the density plot
       p <- ggplot(data.frame(length = sentence_lengths), aes(x = length)) +
-        geom_histogram(aes(y = ..density..), bins = 30, fill = "blue", alpha = 0.5) +
+        geom_histogram(aes(y = ..density..), bins = input$barsNum, fill = "blue", alpha = 0.5) +
         theme_minimal() +
         labs(title = "Histogram of Sentence Lengths", x = "Sentence Length", y = "Density")
       
